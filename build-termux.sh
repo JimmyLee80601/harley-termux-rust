@@ -19,7 +19,12 @@ rustup target add aarch64-linux-android
 # 2. Install Android NDK linker (via termux packages)
 echo "📦 Installing build dependencies..."
 pkg update -y
-pkg install -y clang lld android-ndk-sysroot cmake pkg-config openssl libsqlite
+pkg install -y clang lld android-ndk-sysroot cmake pkg-config openssl libsqlite python python-pip
+
+# 3. Install Python packages for model management
+echo "📦 Installing Python packages..."
+pip install --upgrade pip
+pip install huggingface-hub
 
 # 3. Set up cargo config for Android
 mkdir -p "$HOME/.cargo"
@@ -36,7 +41,21 @@ EOF
 echo "🔨 Building release binary..."
 cargo build --release --target aarch64-linux-android
 
-# 5. Copy to PATH
+# 5. Install llama.cpp for vision model serving
+echo "📦 Installing llama.cpp..."
+pkg install -y llama.cpp 2>/dev/null || {
+    echo "  Building llama.cpp from source..."
+    cd /tmp
+    git clone --depth 1 https://github.com/ggml-org/llama.cpp
+    cd llama.cpp
+    mkdir build && cd build
+    cmake .. -DLLAMA_BUILD_SERVER=ON -DGGML_OPENMP=OFF -DGGML_CUDA=OFF -DGGML_VULKAN=OFF -DCMAKE_BUILD_TYPE=Release
+    cmake --build . --config Release -j$(nproc)
+    cp bin/llama-server "$HOME/.cargo/bin/"
+    echo "  ✅ llama-server installed to ~/.cargo/bin/"
+}
+
+# 6. Copy to PATH
 BINARY="$HOME/.cargo/bin/harley-termux"
 TARGET_BIN="target/aarch64-linux-android/release/harley-termux"
 
@@ -50,6 +69,10 @@ if [ -f "$TARGET_BIN" ]; then
     echo "  harley-termux adb devices"
     echo "  harley-termux link ping"
     echo "  harley-termux memory pull"
+    echo ""
+    echo "Vision model setup:"
+    echo "  harley-termux model download minicpm-v --quant q3_k_m"
+    echo "  harley-termux model serve /sdcard/Download/models/ggml-model-Q3_K_M.gguf /sdcard/Download/models/mmproj-model-f16.gguf"
 else
     echo "❌ Build failed - binary not found at $TARGET_BIN"
     exit 1
