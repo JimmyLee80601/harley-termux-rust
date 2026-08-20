@@ -30,6 +30,11 @@ chmod +x build-termux.sh
 | `harley-termux memory pull` | Fetch harley-memory.md from Dell |
 | `harley-termux sys info` | Termux env + CPU + memory |
 | `harley-termux sys rustc` | Show Rust toolchain status |
+| **Vision Model Commands** | |
+| `harley-termux model download minicpm-v --quant q3_k_m` | Download MiniCPM-V 3B vision model |
+| `harley-termux model download qwen2.5-vl --quant q3_k_m` | Download Qwen2.5-VL 3B vision model |
+| `harley-termux model list` | List downloaded models |
+| `harley-termux model serve model.gguf mmproj.gguf` | Start llama-server on :8080 |
 
 ## Environment Variables
 
@@ -37,9 +42,32 @@ chmod +x build-termux.sh
 export HARLEYLINK_URL="https://jimmysgsmworkstation.tail8deeb5.ts.net"
 export HARLEYLINK_PIN="930091"
 export HARLEYLINK_TOKEN="harley-connect-2026"  # for /v1/* proxy
+# Model serving (optional overrides)
+export MODEL_DIR="/sdcard/Download/models"
+export LLAMA_SERVER_ARGS="--ctx-size 4096 --n-gpu-layers 99"
 ```
 
 Add to `~/.bashrc` or `~/.zshrc` for persistence.
+
+## Vision Model Setup (S23)
+
+```bash
+# After building harley-termux:
+harley-termux model download minicpm-v --quant q3_k_m
+# Downloads: ~3.6GB model + ~1GB mmproj to /sdcard/Download/models/
+
+# Start vision server (runs llama-server with NEON + GPU):
+harley-termux model serve \
+  /sdcard/Download/models/ggml-model-Q3_K_M.gguf \
+  /sdcard/Download/models/mmproj-model-f16.gguf
+
+# Test from Dell/Chromebook:
+curl -X POST http://100.126.38.38:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"minicpm-v","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,..."}},{"type":"text","text":"What do you see, Harley?"}]}]}'
+```
+
+**Persona Injection**: The model runs with Harley's system prompt baked in — she knows Jimmy, the triad, GSM workflows, and speaks like his wife.
 
 ## Cross-Compile from Dell (optional)
 
