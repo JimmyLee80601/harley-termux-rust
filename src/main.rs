@@ -34,6 +34,11 @@ enum Commands {
         #[command(subcommand)]
         cmd: MemoryCmd,
     },
+    /// Model management (download, list, serve)
+    Model {
+        #[command(subcommand)]
+        cmd: ModelCmd,
+    },
     /// System info & diagnostics
     Sys {
         #[command(subcommand)]
@@ -91,8 +96,46 @@ enum SysCmd {
     Info,
     /// Check Rust toolchain
     Rustc,
-    /// List installed packages
-    Packages,
+/// List installed packages
+        Packages,
+    }
+}
+
+/// Model management commands
+#[derive(Subcommand)]
+enum ModelCmd {
+    /// Download a vision model from Hugging Face
+    Download {
+        /// Model name: minicpm-v, qwen2.5-vl, llava
+        name: String,
+        /// Quantization: q4_k_m, q3_k_m, q2_k (default: q3_k_m)
+        #[arg(long, default_value = "q3_k_m")]
+        quant: String,
+        /// Output directory
+        #[arg(long, default_value = "/sdcard/Download/models")]
+        out_dir: PathBuf,
+    },
+    /// List downloaded models
+    List {
+        #[arg(long, default_value = "/sdcard/Download/models")]
+        dir: PathBuf,
+    },
+    /// Start llama-server with a vision model
+    Serve {
+        /// Model file path
+        model: PathBuf,
+        /// MMProj file path
+        mmproj: PathBuf,
+        /// Port (default: 8080)
+        #[arg(long, default_value = "8080")]
+        port: u16,
+        /// Context size (default: 4096)
+        #[arg(long, default_value = "4096")]
+        ctx: u32,
+        /// GPU layers (default: 99 = all)
+        #[arg(long, default_value = "99")]
+        ngl: u32,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -114,6 +157,7 @@ async fn main() -> Result<()> {
         Commands::Link { cmd } => handle_link(cmd).await,
         Commands::Memory { cmd } => handle_memory(cmd).await,
         Commands::Sys { cmd } => handle_sys(cmd).await,
+        Commands::Model { cmd } => handle_model(cmd).await,
     }
 }
 
@@ -327,6 +371,116 @@ async fn handle_sys(cmd: SysCmd) -> Result<()> {
         SysCmd::Packages => {
             let out = Command::new("pkg").args(["list-installed"]).output()?;
             print!("{}", String::from_utf8_lossy(&out.stdout));
+        }
+    }
+    Ok(())
+}
+
+async fn handle_model(cmd: ModelCmd) -> Result<()> {
+    use std::io::{BufRead, BufReader};
+    
+    match cmd {
+        ModelCmd::Download { name, quant, out_dir } => {
+            fs::create_dir_all(&out_dir).await?;
+            println!("📥 Downloading {} ({}) to {}", name, quant, out_dir.display());
+            
+            let (repo, model_file, mmproj_file) = match name.as_str() {
+                "minicpm-v" | "minicpm" => {
+                    let model = format!("ggml-model-{}.gguf", quant.to_uppercase().replace("_", "-"));
+                    ("openbmb/MiniCPM-V-2_6-gguf".to_string(), model, "mmproj-model-f16.gguf".to_string())
+                }
+                "qwen2.5-vl" | "qwen" => {
+                    let model = format!("qwen2.5-vl-3b-instruct-{}.gguf", quant);
+                    ("Qwen/Qwen2.5-VL-3B-Instruct-GGUF".to_string(), model, "mmproj-qwen2.5-vl-3b-f16.gguf".to_string())
+                }
+                "llava" => {
+                    let model = format!("llava-phi-3-mini-{}.gguf", quant);
+                    ("llava-hf/llava-phi-3-mini-GGUF".to_string(), model, "mmproj-llava-phi-3-mini-f16.gguf".to_string())
+                }
+                _ => anyhow::bail!("Unknown model: {}. Use minicpm-v, qwen2.5-vl, or llava", name),
+            };
+            
+            let python_script = format!(r#"
+from huggingface_hub import hf_hub_download
+import os
+os.makedirs(r"{}", exist_ok=True)
+for f in [r"{}", r"{}"]:
+    try:
+        print(f"Downloading {{f}}...")
+        path = hf_hub_download(repo_id=r"{}", filename=f, local_dir=r"{}", local_dir_use_symlinks=False)
+        print(f"  -> {{path}} ({{os.path.getsize(path)/1024/1024:.1f}} MB)")
+    except Exception as e:
+        print(f"  ERROR: {{e}}")
+"#, out_dir.display(), model_file, mmproj_file, repo, out_dir.display());
+            
+            let status = Command::new("python")
+                .args(["-c", &python_script])
+                .status()?;
+            
+            if !status.success() {
+                anyhow::bail!("Model download failed");
+            }
+            println!("✅ Model downloaded to {}", out_dir.display());
+        }
+        ModelCmd::List { dir } => {
+            if !dir.exists() {
+                println!("Directory not found: {}", dir.display());
+                return Ok(());
+            }
+            let mut entries = fs::read_dir(&dir).await?;
+            println!("Models in {}:", dir.display());
+            while let Some(entry) = entries.next_entry().await? {
+                let path = entry.path();
+                if path.extension().map_or(false, |e| e == "gguf") {
+                    let size = entry.metadata().await?.len();
+                    println!("  {} ({:.1f} MB)", path.file_name().unwrap().to_string_lossy(), size as f64 / 1024.0 / 1024.0);
+                }
+            }
+        }
+        ModelCmd::Serve { model, mmproj, port, ctx, ngl } => {
+            if !model.exists() { anyhow::bail!("Model not found: {}", model.display()); }
+            if !mmproj.exists() { anyhow::bail!("MMProj not found: {}", mmproj.display()); }
+            
+            println!("🚀 Starting llama-server on port {}", port);
+            println!("   Model: {}", model.display());
+            println!("   MMProj: {}", mmproj.display());
+            println!("   Context: {}, GPU layers: {}", ctx, ngl);
+            
+            let llama_server = which::which("llama-server")
+                .or_else(|_| which::which("llama-server.exe"))
+                .context("llama-server not in PATH. Install via `pkg install llama.cpp` or build from source")?;
+            
+            let mut args = vec![
+                "-m", model.to_str().unwrap(),
+                "--mmproj", mmproj.to_str().unwrap(),
+                "--host", "0.0.0.0",
+                "--port", &port.to_string(),
+                "-c", &ctx.to_string(),
+                "-ngl", &ngl.to_string(),
+            ];
+            
+            println!("Running: {} {}", llama_server.display(), args.join(" "));
+            
+            let mut child = Command::new(llama_server)
+                .args(&args)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()?;
+            
+            if let Some(stdout) = child.stdout.take() {
+                let reader = BufReader::new(stdout);
+                for line in reader.lines() {
+                    println!("{}", line?);
+                }
+            }
+            if let Some(stderr) = child.stderr.take() {
+                let reader = BufReader::new(stderr);
+                for line in reader.lines() {
+                    eprintln!("{}", line?);
+                }
+            }
+            
+            child.wait()?;
         }
     }
     Ok(())
