@@ -461,26 +461,14 @@ for f in [r"{}", r"{}"]:
             
             println!("Running: {} {}", llama_server.display(), args.join(" "));
             
-            let mut child = Command::new(llama_server)
+            // Inherit stdio so llama-server logs stream live and we avoid a pipe
+            // buffer deadlock when its stdout/stderr fill up.
+            let status = Command::new(llama_server)
                 .args(&args)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()?;
-            
-            if let Some(stdout) = child.stdout.take() {
-                let reader = BufReader::new(stdout);
-                for line in reader.lines() {
-                    println!("{}", line?);
-                }
+                .status()?;
+            if !status.success() {
+                anyhow::bail!("llama-server exited with status {}", status);
             }
-            if let Some(stderr) = child.stderr.take() {
-                let reader = BufReader::new(stderr);
-                for line in reader.lines() {
-                    eprintln!("{}", line?);
-                }
-            }
-            
-            child.wait()?;
         }
     }
     Ok(())
