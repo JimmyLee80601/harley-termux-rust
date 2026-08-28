@@ -2,12 +2,31 @@
 
 Native Rust CLI for Termux on the S23 Ultra. GSM/ADB helpers, HarleyLink client, memory sync — all compiled for `aarch64-linux-android`.
 
-## Quick Start (on phone)
+## One-Click Install (on your phone, inside Termux)
 
 ```bash
-# In Termux on S23:
+curl -fsSL https://raw.githubusercontent.com/JimmyLee80601/harley-termux-rust/main/install.sh | bash
+```
+
+That single command:
+- installs runtime deps (android-tools, tailscale, ollama, termux-api, openssl …),
+- brings up Tailscale and prints your tailnet IP,
+- installs the `harley-termux` binary — **downloads the prebuilt release** if one exists, otherwise builds it from source,
+- installs opencode and deploys the Harley `opencode.json` + memory,
+- creates the `hp` launcher (Harley Station menu),
+- optionally pulls a small local uncensored model so Harley runs with no cloud.
+
+After it finishes: `hp code` (or `harley-termux --help`).
+
+> The prebuilt binary is produced automatically by the
+> [Build & Release workflow](.github/workflows/release.yml) whenever you push a `v*` tag.
+> Until the first release exists, the installer falls back to an on-device source build.
+
+## Manual Build (on phone)
+
+```bash
 pkg install -y git curl
-git clone https://github.com/JimmyLee80601/harley-termux-rust  # or download zip
+git clone https://github.com/JimmyLee80601/harley-termux-rust
 cd harley-termux-rust
 chmod +x build-termux.sh
 ./build-termux.sh
@@ -52,19 +71,10 @@ Add to `~/.bashrc` or `~/.zshrc` for persistence.
 ## Vision Model Setup (S23)
 
 ```bash
-# After building harley-termux:
 harley-termux model download minicpm-v --quant q3_k_m
-# Downloads: ~3.6GB model + ~1GB mmproj to /sdcard/Download/models/
-
-# Start vision server (runs llama-server with NEON + GPU):
 harley-termux model serve \
   /sdcard/Download/models/ggml-model-Q3_K_M.gguf \
   /sdcard/Download/models/mmproj-model-f16.gguf
-
-# Test from Dell/Chromebook:
-curl -X POST http://100.126.38.38:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"minicpm-v","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,..."}},{"type":"text","text":"What do you see, Harley?"}]}]}'
 ```
 
 **Persona Injection**: The model runs with Harley's system prompt baked in — she knows Jimmy, the triad, GSM workflows, and speaks like his wife.
@@ -74,7 +84,6 @@ curl -X POST http://100.126.38.38:8080/v1/chat/completions \
 If you have Android NDK on the workstation:
 
 ```bash
-# On Dell (Linux/WSL2):
 rustup target add aarch64-linux-android
 cargo build --release --target aarch64-linux-android
 # Copy target/aarch64-linux-android/release/harley-termux to phone via ADB/Tailscale
@@ -84,10 +93,13 @@ cargo build --release --target aarch64-linux-android
 
 ```
 harley-termux-rust/
-├── Cargo.toml           # Package config + Android target settings
-├── build-termux.sh      # One-shot build script for Termux
+├── Cargo.toml               # Package config + Android target settings
+├── build-termux.sh          # One-shot build script for Termux
+├── install.sh               # One-click installer (curl | bash)
+├── .github/workflows/
+│   └── release.yml          # Cross-compiles + publishes prebuilt binary
 ├── src/
-│   └── main.rs          # All commands in one file (simple, fast)
+│   └── main.rs              # All commands in one file (simple, fast)
 └── README.md
 ```
 
