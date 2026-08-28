@@ -1,0 +1,44 @@
+name: Build & Release (aarch64-linux-android)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust + Android target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Set up Android NDK
+        uses: android-actions/setup-android@v3
+      - name: Install NDK
+        run: |
+          sdkmanager --install "ndk;26.1.10909125" >/dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> "$GITHUB_ENV"
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: Build release binary
+        run: cargo ndk -t aarch64-linux-android -o harley-termux build --release
+
+      - name: Strip binary
+        run: "${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" harley-termux
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: harley-termux
+          generate_release_notes: true
